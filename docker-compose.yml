@@ -1,0 +1,44 @@
+# Runs the whole system: MySQL + the app. The same file is used locally and on EC2.
+# Every variable has a safe local default, so a clean clone works with just `docker compose up`.
+services:
+  mysql:
+    image: mysql:8.4
+    restart: always
+    environment:
+      MYSQL_DATABASE: seats
+      MYSQL_USER: app
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-app-password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root-password}
+    command:
+      # READ COMMITTED avoids InnoDB gap locks (fewer deadlocks under contention).
+      - --transaction-isolation=READ-COMMITTED
+      - --max-connections=200
+    ports:
+      # Bound to localhost only: reachable from this machine for tests, never from the internet.
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root-password}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build: .
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DATABASE_URL: mysql://app:${MYSQL_PASSWORD:-app-password}@mysql:3306/seats
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
+      JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-me-0123456789}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-local-dev-admin-key}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+
+volumes:
+  mysql-data:
