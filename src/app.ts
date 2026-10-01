@@ -5,6 +5,7 @@ import { errorHandler, notFoundHandler } from "./errors.js";
 import { httpLogger } from "./logger.js";
 import { authRouter } from "./routes/auth.js";
 import { healthRouter } from "./routes/health.js";
+import { showsRouter } from "./routes/shows.js";
 
 export function createApp() {
   const app = express();
@@ -15,6 +16,7 @@ export function createApp() {
 
   app.use(healthRouter);
   app.use(authRouter);
+  app.use(showsRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler); // last: turns every thrown error into the JSON error envelope
