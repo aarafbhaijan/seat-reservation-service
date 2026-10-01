@@ -8,14 +8,15 @@
 import { createHash } from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { ulid } from "ulid";
-import {
-  MYSQL_ERRNO,
-  RESERVATION_STATUS,
-  SEAT_STATUS,
-  type ReservationStatus,
-} from "../constants.js";
+import { MYSQL_ERRNO, RESERVATION_STATUS, SEAT_STATUS } from "../constants.js";
 import { pool, withTransaction, type Tx } from "../db.js";
 import { DomainError } from "../errors.js";
+import {
+  RESERVATION_COLUMNS,
+  toReservation,
+  type Reservation,
+  type ReservationRow,
+} from "./reservations.js";
 import { getShowOrThrow } from "./shows.js";
 
 export interface ReserveInput {
@@ -23,15 +24,6 @@ export interface ReserveInput {
   userId: string; // from the auth token, never from the request body
   seats: string[];
   idempotencyKey: string;
-}
-
-export interface Reservation {
-  id: string;
-  showId: string;
-  userId: string;
-  seats: string[];
-  amountPaise: number;
-  status: ReservationStatus;
 }
 
 export interface ReserveResult {
@@ -137,16 +129,6 @@ async function insertReservation(
     });
 }
 
-interface ReservationRow extends RowDataPacket {
-  id: string;
-  show_id: string;
-  user_id: string;
-  seats: string[]; // mysql2 parses JSON columns
-  amount_paise: number;
-  status: ReservationStatus;
-  request_hash: string;
-}
-
 // Same key + same request  -> return the original reservation (nothing moves).
 // Same key + different request -> 409, so a buggy client can't silently get the wrong seats.
 async function replayExistingReservation(
@@ -155,7 +137,7 @@ async function replayExistingReservation(
   requestHash: string,
 ): Promise<ReserveResult> {
   const [rows] = await pool.query<ReservationRow[]>(
-    `SELECT id, show_id, user_id, seats, amount_paise, status, request_hash
+    `SELECT ${RESERVATION_COLUMNS}
        FROM reservations
       WHERE user_id = ? AND idempotency_key = ?`,
     [userId, idempotencyKey],
@@ -165,17 +147,7 @@ async function replayExistingReservation(
 
   if (row.request_hash !== requestHash) throw new DomainError("idempotency_key_conflict");
 
-  return {
-    reservation: {
-      id: row.id,
-      showId: row.show_id,
-      userId: row.user_id,
-      seats: row.seats,
-      amountPaise: Number(row.amount_paise),
-      status: row.status,
-    },
-    isReplay: true,
-  };
+  return { reservation: toReservation(row), isReplay: true };
 }
 
 // Per-user limit. All of one user's requests for a show must update the SAME quota row, so

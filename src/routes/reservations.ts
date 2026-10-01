@@ -4,7 +4,9 @@ import { z } from "zod";
 import { currentUser, requireUser } from "../auth.js";
 import { MAX_SEATS_PER_REQUEST } from "../constants.js";
 import { DomainError } from "../errors.js";
-import { reserveSeats, type Reservation } from "../services/reserve.js";
+import { cancelReservation } from "../services/cancel.js";
+import { findReservationForUser, type Reservation } from "../services/reservations.js";
+import { reserveSeats } from "../services/reserve.js";
 import { SeatLabel } from "./shows.js";
 
 export const reservationsRouter = Router();
@@ -64,6 +66,25 @@ reservationsRouter.post<{ showId: string }>(
     // stays true even when the winner retries.
     if (isReplay) res.status(200).setHeader("Idempotent-Replayed", "true");
     else res.status(201);
+    res.json(toReservationResponse(reservation));
+  },
+);
+
+reservationsRouter.post<{ reservationId: string }>(
+  "/reservations/:reservationId/cancel",
+  requireUser,
+  async (req, res) => {
+    const reservation = await cancelReservation(req.params.reservationId, currentUser(req).id);
+    res.json(toReservationResponse(reservation));
+  },
+);
+
+reservationsRouter.get<{ reservationId: string }>(
+  "/reservations/:reservationId",
+  requireUser,
+  async (req, res) => {
+    const reservation = await findReservationForUser(req.params.reservationId, currentUser(req).id);
+    if (!reservation) throw new DomainError("not_found", "Reservation not found");
     res.json(toReservationResponse(reservation));
   },
 );
