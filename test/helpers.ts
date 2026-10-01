@@ -3,11 +3,17 @@
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import type { RowDataPacket } from "mysql2/promise";
+import { Agent, setGlobalDispatcher } from "undici";
 import { ulid } from "ulid";
 import { expect } from "vitest";
 import { createApp } from "../src/app.js";
 import { config } from "../src/config.js";
 import { pool } from "../src/db.js";
+
+// macOS caps the TCP accept queue at 128, so 200 simultaneous connects can be reset.
+// Capping client connections keeps ~64 requests in flight at once: still far more than
+// the 20-connection DB pool, so the database sees real contention.
+setGlobalDispatcher(new Agent({ connections: 64 }));
 
 export interface TestServer {
   baseUrl: string;
@@ -131,4 +137,28 @@ export async function expectInvariantsHold(showId: string): Promise<void> {
     [showId],
   );
   expect(reservationMismatches).toEqual([]);
+}
+
+export async function reserve(
+  baseUrl: string,
+  token: string,
+  showId: string,
+  seats: string[],
+  idempotencyKey: string = ulid(),
+  extraBody: Record<string, unknown> = {},
+): Promise<ApiResponse> {
+  return call(baseUrl, "POST", `/shows/${showId}/reserve`, {
+    token,
+    body: { seats, idempotency_key: idempotencyKey, ...extraBody },
+  });
+}
+
+/** Tally responses as "201", "409:seat_taken", ... so tests can assert the whole distribution. */
+export function outcomes(responses: ApiResponse[]): Record<string, number> {
+  const tally: Record<string, number> = {};
+  for (const { status, body } of responses) {
+    const key = status >= 400 && body?.error?.code ? `${status}:${body.error.code}` : `${status}`;
+    tally[key] = (tally[key] ?? 0) + 1;
+  }
+  return tally;
 }
