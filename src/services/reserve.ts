@@ -11,6 +11,7 @@ import { ulid } from "ulid";
 import { MYSQL_ERRNO, RESERVATION_STATUS, SEAT_STATUS } from "../constants.js";
 import { pool, withTransaction, type Tx } from "../db.js";
 import { DomainError } from "../errors.js";
+import { recordReserveFailure, recordReserveSuccess } from "../metrics.js";
 import {
   RESERVATION_COLUMNS,
   toReservation,
@@ -31,7 +32,19 @@ export interface ReserveResult {
   isReplay: boolean;
 }
 
+// Public entry point: runs the reserve and records the outcome in metrics.
 export async function reserveSeats(input: ReserveInput): Promise<ReserveResult> {
+  try {
+    const result = await reserveSeatsOnce(input);
+    recordReserveSuccess(result.reservation.seats.length, result.isReplay);
+    return result;
+  } catch (error) {
+    recordReserveFailure(error);
+    throw error;
+  }
+}
+
+async function reserveSeatsOnce(input: ReserveInput): Promise<ReserveResult> {
   const show = await getShowOrThrow(input.showId);
 
   // Sorted so the same set of seats always produces the same request hash.

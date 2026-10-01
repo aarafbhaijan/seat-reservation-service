@@ -1,11 +1,14 @@
 // Operational endpoints.
 //  /healthz — liveness: "the process is up". Never touches the DB, so a database outage
 //             doesn't make the platform restart a perfectly healthy process.
+//  /metrics — Prometheus scrape endpoint.
 //  /readyz  — readiness: "send me traffic". Checks MySQL and FAILS CLOSED (503) if it's
 //             unreachable or the process is shutting down.
 import { Router } from "express";
 import { pingDatabase } from "../db.js";
 import { isShuttingDown } from "../lifecycle.js";
+import "../metrics-db.js"; // registers the DB-backed gauges
+import { registry } from "../metrics.js";
 
 export const healthRouter = Router();
 
@@ -26,4 +29,9 @@ healthRouter.get("/readyz", async (req, res) => {
     req.log.warn({ err: error }, "readiness check failed");
     res.status(503).json({ status: "not_ready", database: "unreachable" });
   }
+});
+
+healthRouter.get("/metrics", async (_req, res) => {
+  res.set("Content-Type", registry.contentType);
+  res.send(await registry.metrics());
 });

@@ -3,6 +3,7 @@
 import express from "express";
 import { errorHandler, notFoundHandler } from "./errors.js";
 import { httpLogger } from "./logger.js";
+import { httpMetrics } from "./metrics.js";
 import { authRouter } from "./routes/auth.js";
 import { healthRouter } from "./routes/health.js";
 import { reservationsRouter } from "./routes/reservations.js";
@@ -13,6 +14,7 @@ export function createApp() {
 
   app.disable("x-powered-by");
   app.use(httpLogger); // first, so every later log line and error carries the request id
+  app.use(httpMetrics);
   app.use(express.json({ limit: "1mb" }));
 
   app.use(healthRouter);

@@ -3,6 +3,7 @@ import mysql, { type PoolConnection } from "mysql2/promise";
 import { config } from "./config.js";
 import { INNODB_LOCK_WAIT_TIMEOUT_SECONDS, MYSQL_ERRNO } from "./constants.js";
 import { logger } from "./logger.js";
+import { transactionRetries } from "./metrics.js";
 
 // The pool size caps how many queries run in MySQL at once. Requests beyond this
 // wait in Node's memory (cheap) instead of piling onto the database (expensive).
@@ -37,6 +38,7 @@ export async function withTransaction<T>(work: (tx: Tx) => Promise<T>): Promise<
     } catch (error) {
       if (!isRetryableLockError(error) || attempt >= MAX_TRANSACTION_ATTEMPTS) throw error;
       logger.warn({ errno: errnoOf(error), attempt }, "transaction aborted by MySQL, retrying");
+      transactionRetries.inc({ errno: String(errnoOf(error)) });
       await sleep(Math.random() * 20 * attempt); // jitter, so the retriers don't collide again
     }
   }

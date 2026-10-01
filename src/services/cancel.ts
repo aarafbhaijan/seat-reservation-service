@@ -6,6 +6,7 @@ import type { ResultSetHeader } from "mysql2/promise";
 import { RESERVATION_STATUS, SEAT_STATUS } from "../constants.js";
 import { withTransaction, type Tx } from "../db.js";
 import { DomainError } from "../errors.js";
+import { reservationsCancelled } from "../metrics.js";
 import {
   RESERVATION_COLUMNS,
   toReservation,
@@ -26,6 +27,7 @@ export async function cancelReservation(
     await markCancelled(tx, reservation.id);
     await releaseQuota(tx, reservation);
     await releaseSeats(tx, reservation);
+    reservationsCancelled.inc(); // counted only when this call actually changed something
 
     return { ...reservation, status: RESERVATION_STATUS.CANCELLED };
   });

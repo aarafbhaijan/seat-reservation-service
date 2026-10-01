@@ -223,12 +223,14 @@ Counts are computed in the app **from this same result set**, so a single statem
 |------|------|--------|---------|
 | `reservations_confirmed_total` | counter | — | New reservations committed |
 | `reservation_seats_confirmed_total` | counter | — | Seats in those reservations |
-| `reservations_declined_total` | counter | `reason` = `seat_taken` / `per_user_limit` / `idempotent_replay` / `idempotency_key_conflict` / `unknown_seat` / `invalid_request` | Non-new outcomes |
+| `reservations_declined_total` | counter | `reason` = `seat_taken` / `per_user_limit` / `idempotent_replay` / `idempotency_key_conflict` / `unknown_seat` / `not_found` | Reserve requests that did not create a new reservation (4xx + replays) |
+| `reservations_failed_total` | counter | `code` | Server-side failures (5xx) — should stay 0 |
+| `seats_available` | gauge | `show_id` | Available seats (DB-derived) |
 | `reservations_cancelled_total` | counter | — | Cancels committed |
 | `seats` | gauge | `show_id`, `status` | Read from the DB at scrape time (`GROUP BY show_id, status`), so it always matches the API |
 | `http_request_duration_seconds` | histogram | `method`, `route`, `status` | Latency |
 | `db_pool_connections` | gauge | `state` = `in_use` / `free` / `queued` | Backpressure visibility |
-| `db_tx_retries_total` | counter | `errno` | Deadlock / lock-wait retries |
+| `db_transaction_retries_total` | counter | `errno` | Deadlock / lock-wait retries |
 
 Counters live in a single process and reset on restart. The `seats` gauge is authoritative because it is
 derived from the DB.
