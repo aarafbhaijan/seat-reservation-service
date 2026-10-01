@@ -3,6 +3,7 @@
 import express from "express";
 import { errorHandler, notFoundHandler } from "./errors.js";
 import { httpLogger } from "./logger.js";
+import { authRouter } from "./routes/auth.js";
 import { healthRouter } from "./routes/health.js";
 
 export function createApp() {
@@ -13,6 +14,7 @@ export function createApp() {
   app.use(express.json({ limit: "1mb" }));
 
   app.use(healthRouter);
+  app.use(authRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler); // last: turns every thrown error into the JSON error envelope
