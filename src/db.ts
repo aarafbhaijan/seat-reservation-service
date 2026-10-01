@@ -1,7 +1,8 @@
 // MySQL connection pool and the transaction helper every write path uses.
 import mysql, { type PoolConnection } from "mysql2/promise";
 import { config } from "./config.js";
-import { INNODB_LOCK_WAIT_TIMEOUT_SECONDS } from "./constants.js";
+import { INNODB_LOCK_WAIT_TIMEOUT_SECONDS, MYSQL_ERRNO } from "./constants.js";
+import { logger } from "./logger.js";
 
 // The pool size caps how many queries run in MySQL at once. Requests beyond this
 // wait in Node's memory (cheap) instead of piling onto the database (expensive).
@@ -23,9 +24,39 @@ pool.on("connection", (connection) => {
 
 export type Tx = PoolConnection;
 
-// Runs `work` inside one transaction on one connection.
-// Any thrown error (including a DomainError like "seat taken") rolls everything back.
+const MAX_TRANSACTION_ATTEMPTS = 3;
+
+// Runs `work` inside one transaction, retrying if MySQL aborted it because of a deadlock or a
+// lock-wait timeout. Our fixed lock order means deadlocks shouldn't happen — this is a safety
+// net, so a rare one becomes a short delay instead of a 500.
+// `work` must only touch the database (it may run more than once).
 export async function withTransaction<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await runInTransaction(work);
+    } catch (error) {
+      if (!isRetryableLockError(error) || attempt >= MAX_TRANSACTION_ATTEMPTS) throw error;
+      logger.warn({ errno: errnoOf(error), attempt }, "transaction aborted by MySQL, retrying");
+      await sleep(Math.random() * 20 * attempt); // jitter, so the retriers don't collide again
+    }
+  }
+}
+
+function errnoOf(error: unknown): number | undefined {
+  return (error as { errno?: number }).errno;
+}
+
+function isRetryableLockError(error: unknown): boolean {
+  const errno = errnoOf(error);
+  return errno === MYSQL_ERRNO.DEADLOCK || errno === MYSQL_ERRNO.LOCK_WAIT_TIMEOUT;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Any thrown error (including a DomainError like "seat taken") rolls everything back.
+async function runInTransaction<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
@@ -53,7 +84,7 @@ export async function waitForDatabase(maxWaitMs = 60_000): Promise<void> {
       return;
     } catch (error) {
       if (Date.now() - startedAt > maxWaitMs) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      await sleep(1_000);
     }
   }
 }

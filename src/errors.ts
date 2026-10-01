@@ -61,6 +61,10 @@ function toDomainError(error: unknown): DomainError {
   if (err.type === "entity.parse.failed")
     return new DomainError("invalid_request", "Body is not valid JSON");
   if (err.code && DATABASE_DOWN_CODES.has(err.code)) return new DomainError("unavailable");
+  // Still deadlocking after every retry: the database is overloaded, not the client's fault.
+  if (err.code === "ER_LOCK_DEADLOCK" || err.code === "ER_LOCK_WAIT_TIMEOUT") {
+    return new DomainError("unavailable");
+  }
 
   return new DomainError("internal_error");
 }
