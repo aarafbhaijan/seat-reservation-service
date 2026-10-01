@@ -53,13 +53,17 @@ reservationsRouter.post<{ showId: string }>(
   async (req, res) => {
     const body = ReserveRequest.parse(req.body ?? {});
 
-    const { reservation } = await reserveSeats({
+    const { reservation, isReplay } = await reserveSeats({
       showId: req.params.showId,
       userId: currentUser(req).id,
       seats: body.seats,
       idempotencyKey: idempotencyKeyFrom(req, body.idempotency_key),
     });
 
-    res.status(201).json(toReservationResponse(reservation));
+    // A replay answers 200 (not 201) with the original body, so "exactly one 201 per seat"
+    // stays true even when the winner retries.
+    if (isReplay) res.status(200).setHeader("Idempotent-Replayed", "true");
+    else res.status(201);
+    res.json(toReservationResponse(reservation));
   },
 );

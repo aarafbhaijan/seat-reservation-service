@@ -8,7 +8,12 @@
 import { createHash } from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { ulid } from "ulid";
-import { RESERVATION_STATUS, SEAT_STATUS, type ReservationStatus } from "../constants.js";
+import {
+  MYSQL_ERRNO,
+  RESERVATION_STATUS,
+  SEAT_STATUS,
+  type ReservationStatus,
+} from "../constants.js";
 import { pool, withTransaction, type Tx } from "../db.js";
 import { DomainError } from "../errors.js";
 import { getShowOrThrow } from "./shows.js";
@@ -62,6 +67,9 @@ export async function reserveSeats(input: ReserveInput): Promise<ReserveResult> 
       await takeSeatsOrFail(tx, reservation);
     });
   } catch (error) {
+    if (error instanceof IdempotencyKeyAlreadyUsed) {
+      return replayExistingReservation(input.userId, input.idempotencyKey, requestHash);
+    }
     if (error instanceof DomainError && error.code === "seat_taken") {
       await failIfAnySeatIsUnknown(show.id, seats);
     }
@@ -89,27 +97,85 @@ function hashRequest(showId: string, sortedSeats: string[]): string {
     .digest("hex");
 }
 
+// Thrown inside the transaction when the (user_id, idempotency_key) row already exists.
+// Throwing (instead of returning) makes withTransaction roll back before we read the original.
+class IdempotencyKeyAlreadyUsed extends Error {}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return (error as { errno?: number }).errno === MYSQL_ERRNO.DUPLICATE_KEY;
+}
+
+// Step 1 — claim the idempotency key. UNIQUE (user_id, idempotency_key) makes "apply this
+// request twice" impossible: if two copies arrive at once, the second INSERT waits on the
+// first's key lock. First commits -> second gets a duplicate-key error -> replay.
+// First rolls back (e.g. seat taken) -> second proceeds as if it were the first.
 async function insertReservation(
   tx: Tx,
   reservation: Reservation,
   idempotencyKey: string,
   requestHash: string,
 ): Promise<void> {
-  await tx.query(
-    `INSERT INTO reservations
+  await tx
+    .query(
+      `INSERT INTO reservations
        (id, show_id, user_id, seats, amount_paise, status, idempotency_key, request_hash)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      reservation.id,
-      reservation.showId,
-      reservation.userId,
-      JSON.stringify(reservation.seats),
-      reservation.amountPaise,
-      reservation.status,
-      idempotencyKey,
-      requestHash,
-    ],
+      [
+        reservation.id,
+        reservation.showId,
+        reservation.userId,
+        JSON.stringify(reservation.seats),
+        reservation.amountPaise,
+        reservation.status,
+        idempotencyKey,
+        requestHash,
+      ],
+    )
+    .catch((error: unknown) => {
+      if (isDuplicateKeyError(error)) throw new IdempotencyKeyAlreadyUsed();
+      throw error;
+    });
+}
+
+interface ReservationRow extends RowDataPacket {
+  id: string;
+  show_id: string;
+  user_id: string;
+  seats: string[]; // mysql2 parses JSON columns
+  amount_paise: number;
+  status: ReservationStatus;
+  request_hash: string;
+}
+
+// Same key + same request  -> return the original reservation (nothing moves).
+// Same key + different request -> 409, so a buggy client can't silently get the wrong seats.
+async function replayExistingReservation(
+  userId: string,
+  idempotencyKey: string,
+  requestHash: string,
+): Promise<ReserveResult> {
+  const [rows] = await pool.query<ReservationRow[]>(
+    `SELECT id, show_id, user_id, seats, amount_paise, status, request_hash
+       FROM reservations
+      WHERE user_id = ? AND idempotency_key = ?`,
+    [userId, idempotencyKey],
   );
+  const row = rows[0];
+  if (!row) throw new Error("idempotency key vanished after a duplicate-key error");
+
+  if (row.request_hash !== requestHash) throw new DomainError("idempotency_key_conflict");
+
+  return {
+    reservation: {
+      id: row.id,
+      showId: row.show_id,
+      userId: row.user_id,
+      seats: row.seats,
+      amountPaise: Number(row.amount_paise),
+      status: row.status,
+    },
+    isReplay: true,
+  };
 }
 
 // Per-user limit. All of one user's requests for a show must update the SAME quota row, so
