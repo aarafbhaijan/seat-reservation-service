@@ -5,8 +5,9 @@
 
 ## Current status
 
-- **Phase:** planning docs written. Next: repo scaffold → schema/migrations → reserve path → tests → metrics/logs → burst → deploy.
-- **Last updated:** 2026-10-01
+- **Phase:** service complete and verified locally (37 tests, 20k burst all checks passing, clean clone OK).
+  Next: AWS EC2 deploy with a personal account → live burst → fill live URL/numbers into README + WRITEUP.
+- **Last updated:** 2026-10-02
 
 ## Decision log
 
