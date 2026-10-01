@@ -1,0 +1,13 @@
+# Public entry point on EC2: automatic HTTPS (Let's Encrypt) in front of the app.
+# SITE_ADDRESS is e.g. 13-233-45-67.sslip.io — sslip.io resolves that name to the IP,
+# so we get a real certificate without buying a domain.
+{$SITE_ADDRESS} {
+	reverse_proxy app:3000 {
+		transport http {
+			# Must be SHORTER than the app's keepAliveTimeout (65s). Otherwise Caddy may reuse
+			# a connection Node just closed, and that request fails with a 502.
+			keepalive 30s
+			keepalive_idle_conns 512
+		}
+	}
+}

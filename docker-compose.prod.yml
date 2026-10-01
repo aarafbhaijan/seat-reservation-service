@@ -1,0 +1,32 @@
+# Production overrides for EC2. Use together with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# Differences from local: Caddy terminates HTTPS on 80/443, and the app is no longer
+# published directly — the only public ports are Caddy's.
+services:
+  app:
+    ports: !reset []
+    expose:
+      - "3000"
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+
+  caddy:
+    image: caddy:2.10
+    restart: always
+    depends_on:
+      - app
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS, e.g. 13-233-45-67.sslip.io}
+    ports:
+      - "80:80"
+      - "443:443"
+    ulimits:
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:
