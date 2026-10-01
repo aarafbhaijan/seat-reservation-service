@@ -87,9 +87,20 @@ export async function findShow(showId: string): Promise<Show | null> {
   };
 }
 
+// Shows never change after creation, so caching them in memory is always correct — and it
+// saves a database round-trip on every single reserve request.
+const showCache = new Map<string, Show>();
+const SHOW_CACHE_LIMIT = 10_000;
+
 export async function getShowOrThrow(showId: string): Promise<Show> {
+  const cached = showCache.get(showId);
+  if (cached) return cached;
+
   const show = await findShow(showId);
   if (!show) throw new DomainError("not_found", "Show not found");
+
+  if (showCache.size >= SHOW_CACHE_LIMIT) showCache.clear();
+  showCache.set(showId, show);
   return show;
 }
 

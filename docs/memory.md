@@ -38,6 +38,10 @@
   concurrent `INSERT IGNORE` of the same new `user_quota` row inside transactions deadlocks (InnoDB
   shared next-key locks on the duplicate key). Fix: create the quota row outside the transaction, so the
   transaction only UPDATEs. The limit itself was never violated — but 5xx is a failure too.
+- 2026-10-02: first full 20k local burst passed every check but ran at only 459 req/s (p50 25 s). Profiling showed the
+  Node process CPU-bound while MySQL sat at ~24% CPU. Fixes, in order of impact: read-only fast-path declines
+  (most stampede requests lose, so they no longer open a transaction), in-memory show cache (shows are immutable),
+  verified-JWT cache, `randomUUID` request ids instead of ULIDs, async pino destination. Result: 1,750 req/s, 0 errors.
 - macOS caps the TCP accept queue at 128 (`kern.ipc.somaxconn`), so the test client limits itself to 64
   connections. Not a server bug; Linux (EC2) defaults to 4096.
 

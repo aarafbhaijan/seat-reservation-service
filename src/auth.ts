@@ -31,11 +31,24 @@ export async function signToken(userId: string, role: Role): Promise<string> {
     .sign(secret);
 }
 
+// Checking a signature is the most CPU-expensive thing a request does, and a stampede sends
+// the same token many times. A token can't change, so once its signature checks out we
+// remember the result and only re-check the expiry time on later requests.
+const verifiedTokens = new Map<string, { user: AuthUser; expiresAtMs: number }>();
+const VERIFIED_TOKEN_CACHE_LIMIT = 50_000;
+
 async function verifyToken(token: string): Promise<AuthUser> {
+  const cached = verifiedTokens.get(token);
+  if (cached && cached.expiresAtMs > Date.now()) return cached.user;
+
   try {
     const { payload } = await jwtVerify(token, secret, { algorithms: ["HS256"] });
-    if (!payload.sub) throw new Error("token has no subject");
-    return { id: payload.sub, role: payload.role === "admin" ? "admin" : "user" };
+    if (!payload.sub || !payload.exp) throw new Error("token has no subject or expiry");
+    const user: AuthUser = { id: payload.sub, role: payload.role === "admin" ? "admin" : "user" };
+
+    if (verifiedTokens.size >= VERIFIED_TOKEN_CACHE_LIMIT) verifiedTokens.clear();
+    verifiedTokens.set(token, { user, expiresAtMs: payload.exp * 1000 });
+    return user;
   } catch {
     throw new DomainError("unauthorized");
   }

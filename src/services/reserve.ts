@@ -1,4 +1,12 @@
-// The reserve transaction — the heart of the service.
+// The reserve flow — the heart of the service. Two phases:
+//
+// 1. FAST PATH (plain reads, no transaction, no locks). Most requests in an on-sale stampede
+//    lose: the seat is already gone. We detect that with a cheap read and decline right away.
+//    Rule: a read may only ever DECLINE, never grant. Declining because a committed read showed
+//    the seat as taken is correct — it really was taken at that moment.
+//
+// 2. ATOMIC PATH (one short transaction). Only requests that might win get here. This is where
+//    a seat is actually granted, by a conditional UPDATE that cannot double-sell.
 //
 // Every write transaction takes its locks in the same order, which is why two reserves
 // can never deadlock each other:
@@ -50,9 +58,25 @@ async function reserveSeatsOnce(input: ReserveInput): Promise<ReserveResult> {
   // Sorted so the same set of seats always produces the same request hash.
   const seats = [...input.seats].sort();
 
-  // Fast decline: a request bigger than the limit can never succeed, no transaction needed.
+  // A request bigger than the limit can never succeed.
   if (seats.length > show.perUserLimit) throw new DomainError("per_user_limit");
 
+  const requestHash = hashRequest(show.id, seats);
+
+  // ---- fast path: cheap reads that can only decline ----
+  const seatStatuses = await readSeatStatuses(show.id, seats); // 422 if a label doesn't exist
+
+  // Checked BEFORE declining a taken seat: if this is a retry of a request that already
+  // succeeded, the seat is "taken" by this very reservation and the answer is a replay.
+  const previous = await findByIdempotencyKey(input.userId, input.idempotencyKey);
+  if (previous) return replayOrConflict(previous, requestHash);
+
+  if (seatStatuses.some((status) => status !== SEAT_STATUS.AVAILABLE)) {
+    throw new DomainError("seat_taken");
+  }
+  await declineIfOverLimit(show.id, input.userId, seats.length, show.perUserLimit);
+
+  // ---- atomic path: the real decision ----
   const reservation: Reservation = {
     id: ulid(),
     showId: show.id,
@@ -61,9 +85,6 @@ async function reserveSeatsOnce(input: ReserveInput): Promise<ReserveResult> {
     amountPaise: show.pricePaise * seats.length, // integer paise × integer count
     status: RESERVATION_STATUS.CONFIRMED,
   };
-  const requestHash = hashRequest(show.id, seats);
-
-  await ensureQuotaRowExists(show.id, input.userId);
 
   try {
     await withTransaction(async (tx) => {
@@ -72,16 +93,72 @@ async function reserveSeatsOnce(input: ReserveInput): Promise<ReserveResult> {
       await takeSeatsOrFail(tx, reservation);
     });
   } catch (error) {
+    // A copy of this request committed between our fast-path read and our INSERT.
     if (error instanceof IdempotencyKeyAlreadyUsed) {
-      return replayExistingReservation(input.userId, input.idempotencyKey, requestHash);
-    }
-    if (error instanceof DomainError && error.code === "seat_taken") {
-      await failIfAnySeatIsUnknown(show.id, seats);
+      const original = await findByIdempotencyKey(input.userId, input.idempotencyKey);
+      if (!original) throw new Error("idempotency key vanished after a duplicate-key error");
+      return replayOrConflict(original, requestHash);
     }
     throw error;
   }
 
   return { reservation, isReplay: false };
+}
+
+// Plain read of the requested seats. Seat labels never change after a show is created, so
+// "this label doesn't exist" is always accurate. The statuses may be a moment old — that's
+// fine, they are only used to decline early; granting happens in takeSeatsOrFail.
+async function readSeatStatuses(showId: string, seats: string[]): Promise<string[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    "SELECT label, status FROM seats WHERE show_id = ? AND label IN (?)",
+    [showId, seats],
+  );
+  if (rows.length !== seats.length) {
+    const existing = new Set(rows.map((row) => row.label as string));
+    const unknownSeats = seats.filter((label) => !existing.has(label));
+    throw new DomainError("unknown_seat", undefined, { unknown_seats: unknownSeats });
+  }
+  return rows.map((row) => row.status as string);
+}
+
+async function findByIdempotencyKey(
+  userId: string,
+  idempotencyKey: string,
+): Promise<ReservationRow | null> {
+  const [rows] = await pool.query<ReservationRow[]>(
+    `SELECT ${RESERVATION_COLUMNS}
+       FROM reservations
+      WHERE user_id = ? AND idempotency_key = ?`,
+    [userId, idempotencyKey],
+  );
+  return rows[0] ?? null;
+}
+
+// Same key + same request  -> return the original reservation (nothing moves).
+// Same key + different request -> 409, so a buggy client can't silently get the wrong seats.
+function replayOrConflict(original: ReservationRow, requestHash: string): ReserveResult {
+  if (original.request_hash !== requestHash) throw new DomainError("idempotency_key_conflict");
+  return { reservation: toReservation(original), isReplay: true };
+}
+
+// Early decline if the user is already at their limit; also makes sure the quota row exists.
+async function declineIfOverLimit(
+  showId: string,
+  userId: string,
+  seatCount: number,
+  perUserLimit: number,
+): Promise<void> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    "SELECT seats_held FROM user_quota WHERE show_id = ? AND user_id = ?",
+    [showId, userId],
+  );
+  if (!rows[0]) {
+    await ensureQuotaRowExists(showId, userId);
+    return;
+  }
+  if (Number(rows[0].seats_held) + seatCount > perUserLimit) {
+    throw new DomainError("per_user_limit");
+  }
 }
 
 // Creates the user's quota row (0 seats) if it doesn't exist yet — deliberately OUTSIDE the
@@ -142,27 +219,6 @@ async function insertReservation(
     });
 }
 
-// Same key + same request  -> return the original reservation (nothing moves).
-// Same key + different request -> 409, so a buggy client can't silently get the wrong seats.
-async function replayExistingReservation(
-  userId: string,
-  idempotencyKey: string,
-  requestHash: string,
-): Promise<ReserveResult> {
-  const [rows] = await pool.query<ReservationRow[]>(
-    `SELECT ${RESERVATION_COLUMNS}
-       FROM reservations
-      WHERE user_id = ? AND idempotency_key = ?`,
-    [userId, idempotencyKey],
-  );
-  const row = rows[0];
-  if (!row) throw new Error("idempotency key vanished after a duplicate-key error");
-
-  if (row.request_hash !== requestHash) throw new DomainError("idempotency_key_conflict");
-
-  return { reservation: toReservation(row), isReplay: true };
-}
-
 // Per-user limit. All of one user's requests for a show must update the SAME quota row, so
 // InnoDB runs them one at a time. Each sees the committed `seats_held` and the guard in WHERE
 // only lets the update through if the new total stays within the limit — so 10 parallel
@@ -219,19 +275,4 @@ async function takeSeatsOrFail(tx: Tx, reservation: Reservation): Promise<void> 
   if (result.affectedRows !== reservation.seats.length) {
     throw new DomainError("seat_taken");
   }
-}
-
-// Runs only AFTER a failed transaction has rolled back, to pick the right error message.
-// It never decides who gets a seat. (Seat labels never change after a show is created,
-// so this read can't be stale in a way that matters.)
-async function failIfAnySeatIsUnknown(showId: string, seats: string[]): Promise<void> {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    "SELECT label FROM seats WHERE show_id = ? AND label IN (?)",
-    [showId, seats],
-  );
-  if (rows.length === seats.length) return;
-
-  const existing = new Set(rows.map((row) => row.label as string));
-  const unknownSeats = seats.filter((label) => !existing.has(label));
-  throw new DomainError("unknown_seat", undefined, { unknown_seats: unknownSeats });
 }

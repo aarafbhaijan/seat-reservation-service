@@ -45,6 +45,7 @@ function shutdown(server: Server, signal: string) {
   server.close(async () => {
     await closePools();
     logger.info("shutdown complete");
+    logger.flush(); // write out any buffered log lines before exiting
     process.exit(0);
   });
   server.closeIdleConnections();

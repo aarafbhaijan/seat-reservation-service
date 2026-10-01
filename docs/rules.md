@@ -40,8 +40,9 @@
 
 ## Correctness rules
 
-13. **Never read-then-write for a decision.** Every ownership or limit decision is one conditional statement
-    (`UPDATE … WHERE <guard>`) or a unique constraint. Reads may only choose an error *message*, never the outcome.
+13. **Never read-then-write to GRANT.** Granting a seat, quota or idempotency key is always one conditional
+    statement (`UPDATE … WHERE <guard>`) or a unique constraint. A plain read may only ever **decline early**
+    (a committed read showing the seat taken is a true answer at that instant). It never grants anything.
 14. **The guard goes in `WHERE`.** Judge success only by `affectedRows`, and only when non-qualifying rows are
     excluded by `WHERE`.
 15. **Fixed lock order** in every write transaction:
