@@ -1,8 +1,19 @@
-// Process entry point: create the app and start listening.
+// Process entry point: wait for MySQL, apply migrations, then start listening.
 import { createApp } from "./app.js";
+import { config } from "./config.js";
+import { waitForDatabase } from "./db.js";
+import { runMigrations } from "./migrate.js";
 
-const port = Number(process.env.PORT ?? 3000);
+async function main() {
+  await waitForDatabase();
+  await runMigrations();
 
-createApp().listen(port, () => {
-  console.log(`listening on :${port}`);
+  createApp().listen(config.PORT, () => {
+    console.log(`listening on :${config.PORT}`);
+  });
+}
+
+main().catch((error) => {
+  console.error("failed to start", error);
+  process.exit(1);
 });
