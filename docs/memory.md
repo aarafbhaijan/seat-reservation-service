@@ -34,6 +34,13 @@
 
 ## Lessons / gotchas
 
+- 2026-10-01: the per-user-limit concurrency test (10 parallel reserves, same user) returned 500s. Cause:
+  concurrent `INSERT IGNORE` of the same new `user_quota` row inside transactions deadlocks (InnoDB
+  shared next-key locks on the duplicate key). Fix: create the quota row outside the transaction, so the
+  transaction only UPDATEs. The limit itself was never violated — but 5xx is a failure too.
+- macOS caps the TCP accept queue at 128 (`kern.ipc.somaxconn`), so the test client limits itself to 64
+  connections. Not a server bug; Linux (EC2) defaults to 4096.
+
 - mysql2 reports *matched* rows, so guards must live in `WHERE` for `affectedRows` to mean "won".
 - InnoDB default `REPEATABLE READ` uses gap locks, so we use `READ COMMITTED` to cut deadlocks.
 - Platform proxy 502/504s count as 5xx, so app-side queueing and timeouts matter as much as SQL correctness.

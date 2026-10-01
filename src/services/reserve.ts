@@ -3,7 +3,8 @@
 // Every write transaction takes its locks in the same order, which is why two reserves
 // can never deadlock each other:
 //     1. reservations (user_id, idempotency_key)   — claim the idempotency key
-//     2. seats (show_id, label) in primary-key order — take the seats
+//     2. user_quota (show_id, user_id)               — reserve the user's quota
+//     3. seats (show_id, label) in primary-key order — take the seats
 import { createHash } from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { ulid } from "ulid";
@@ -39,6 +40,9 @@ export async function reserveSeats(input: ReserveInput): Promise<ReserveResult> 
   // Sorted so the same set of seats always produces the same request hash.
   const seats = [...input.seats].sort();
 
+  // Fast decline: a request bigger than the limit can never succeed, no transaction needed.
+  if (seats.length > show.perUserLimit) throw new DomainError("per_user_limit");
+
   const reservation: Reservation = {
     id: ulid(),
     showId: show.id,
@@ -49,9 +53,12 @@ export async function reserveSeats(input: ReserveInput): Promise<ReserveResult> 
   };
   const requestHash = hashRequest(show.id, seats);
 
+  await ensureQuotaRowExists(show.id, input.userId);
+
   try {
     await withTransaction(async (tx) => {
       await insertReservation(tx, reservation, input.idempotencyKey, requestHash);
+      await reserveQuotaOrFail(tx, reservation, show.perUserLimit);
       await takeSeatsOrFail(tx, reservation);
     });
   } catch (error) {
@@ -62,6 +69,18 @@ export async function reserveSeats(input: ReserveInput): Promise<ReserveResult> 
   }
 
   return { reservation, isReplay: false };
+}
+
+// Creates the user's quota row (0 seats) if it doesn't exist yet — deliberately OUTSIDE the
+// transaction, as its own auto-committed statement. Why: when several transactions INSERT the
+// same new row at once, InnoDB takes shared locks on the duplicate key and they can deadlock
+// each other. Committing the row up front means the transaction only ever UPDATEs an existing
+// row, which simply queues. A leftover row with 0 seats is harmless.
+async function ensureQuotaRowExists(showId: string, userId: string): Promise<void> {
+  await pool.query(
+    "INSERT IGNORE INTO user_quota (show_id, user_id, seats_held) VALUES (?, ?, 0)",
+    [showId, userId],
+  );
 }
 
 function hashRequest(showId: string, sortedSeats: string[]): string {
@@ -91,6 +110,36 @@ async function insertReservation(
       requestHash,
     ],
   );
+}
+
+// Per-user limit. All of one user's requests for a show must update the SAME quota row, so
+// InnoDB runs them one at a time. Each sees the committed `seats_held` and the guard in WHERE
+// only lets the update through if the new total stays within the limit — so 10 parallel
+// requests on a limit-4 show can never get more than 4 seats.
+// (If the seat step later fails, the rollback gives the quota back automatically.)
+
+const RESERVE_QUOTA_SQL = `
+  UPDATE user_quota
+     SET seats_held = seats_held + ?
+   WHERE show_id = ?
+     AND user_id = ?
+     AND seats_held + ? <= ?`;
+
+async function reserveQuotaOrFail(
+  tx: Tx,
+  reservation: Reservation,
+  perUserLimit: number,
+): Promise<void> {
+  const seatCount = reservation.seats.length;
+  const [result] = await tx.query<ResultSetHeader>(RESERVE_QUOTA_SQL, [
+    seatCount,
+    reservation.showId,
+    reservation.userId,
+    seatCount,
+    perUserLimit,
+  ]);
+
+  if (result.affectedRows !== 1) throw new DomainError("per_user_limit");
 }
 
 // THE atomic decision. The "is it available?" check and the write are ONE statement:

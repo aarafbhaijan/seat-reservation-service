@@ -107,6 +107,11 @@ Input: `showId`, `userId` (from the JWT), `seats[]`, `idempotencyKey`.
 4. Load the show (`price_paise`, `per_user_limit`). `404` if missing. (Immutable, so safe to read outside the tx.)
 5. `sorted.length > per_user_limit` → `409 per_user_limit` (fast decline, no tx).
 
+6. `INSERT IGNORE INTO user_quota (show_id, user_id, 0)` as its **own auto-committed statement**.
+   Found by the concurrency test: when 10 parallel transactions INSERT the same *new* quota row, InnoDB's
+   shared locks on the duplicate key deadlock them (→ 500). Creating the row up front means the transaction
+   only ever UPDATEs an existing row, which just queues.
+
 **Transaction (`READ COMMITTED`, retried on 1213/1205 up to 3×):**
 
 ```sql
@@ -117,7 +122,7 @@ VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?);
 --   ER_DUP_ENTRY (1062) → ROLLBACK → go to "Replay path"
 
 -- Step 2: per-user limit (lock order #2)
-INSERT IGNORE INTO user_quota (show_id, user_id, seats_held) VALUES (?, ?, 0);
+-- (the quota row itself is created BEFORE the transaction — see note below)
 UPDATE user_quota
    SET seats_held = seats_held + ?            -- n
  WHERE show_id = ? AND user_id = ?
