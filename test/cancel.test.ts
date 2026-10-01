@@ -1,6 +1,6 @@
 import { ulid } from "ulid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "../src/db.js";
+import { closePools } from "../src/db.js";
 import {
   call,
   createTestShow,
@@ -19,7 +19,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await server.close();
-  await pool.end();
+  await closePools();
 });
 
 const cancel = (token: string, reservationId: string) =>

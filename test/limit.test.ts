@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { pool } from "../src/db.js";
+import { closePools } from "../src/db.js";
 import {
   createTestShow,
   expectInvariantsHold,
@@ -17,7 +17,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await server.close();
-  await pool.end();
+  await closePools();
 });
 
 describe("per-user limit", () => {

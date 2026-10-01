@@ -71,8 +71,23 @@ async function runInTransaction<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
   }
 }
 
+// A tiny separate pool for health checks and metrics scrapes. During a burst every main-pool
+// connection may be busy with reservations; probes must still get an honest, fast answer.
+export const probePool = mysql.createPool({
+  uri: config.DATABASE_URL,
+  connectionLimit: 2,
+  waitForConnections: true,
+  enableKeepAlive: true,
+});
+
+const PROBE_TIMEOUT_MS = 1_000;
+
 export async function pingDatabase(): Promise<void> {
-  await pool.query("SELECT 1");
+  await probePool.query({ sql: "SELECT 1", timeout: PROBE_TIMEOUT_MS });
+}
+
+export async function closePools(): Promise<void> {
+  await Promise.all([pool.end(), probePool.end()]);
 }
 
 // On a cold start MySQL may still be booting; keep trying for a while before giving up.

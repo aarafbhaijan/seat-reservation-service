@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { pool, withTransaction } from "../src/db.js";
+import { closePools, withTransaction } from "../src/db.js";
 import { DomainError } from "../src/errors.js";
 
 afterAll(async () => {
-  await pool.end();
+  await closePools();
 });
 
 function mysqlError(errno: number): Error {
