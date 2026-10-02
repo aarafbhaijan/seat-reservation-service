@@ -12,9 +12,10 @@ export const logger = pino(
     // Never write credentials to logs.
     redact: ["req.headers.authorization", 'req.headers["x-admin-key"]'],
   },
-  // Buffered, asynchronous writes: logging thousands of lines a second must not block
-  // the event loop. Flushed on shutdown (server.ts).
-  destination({ sync: false, minLength: 4096 }),
+  // Asynchronous writes, so logging thousands of lines a second doesn't block the event loop.
+  // minLength 0 = no batching: each line is written as soon as possible. (A 4 KB batch looked
+  // fine under a burst but held single log lines back indefinitely when traffic was quiet.)
+  destination({ sync: false, minLength: 0 }),
 );
 
 const VALID_REQUEST_ID = /^[A-Za-z0-9._-]{1,128}$/;
