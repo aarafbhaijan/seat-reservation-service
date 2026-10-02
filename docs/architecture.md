@@ -22,7 +22,7 @@ decision is made **inside MySQL** in a single short transaction, never in applic
 | Tests | Vitest against a real MySQL (docker compose) | Concurrency bugs only show up against a real DB |
 | Load | Node + undici (`scripts/burst.ts`) | Exact outcome distribution + reconciliation report |
 | Packaging | Multi-stage Dockerfile + docker-compose | Local == deployed |
-| Hosting | AWS EC2 t3.small (ap-south-1) + Elastic IP, Caddy for TLS | See §7 |
+| Hosting | AWS EC2 t3.small (ap-southeast-2) + Elastic IP, Caddy for TLS | See §7 |
 
 **Deliberately not used:**
 - **Redis:** a second source of truth that could disagree with MySQL and break reconciliation.
@@ -88,12 +88,13 @@ net, not the design.
 
 | Item | Choice |
 |------|--------|
-| Compute | EC2 **t3.small** (2 GB), Amazon Linux 2023, region **ap-south-1 (Mumbai)** |
+| Compute | EC2 **t3.small** (2 vCPU, 2 GB), Ubuntu 26.04, region **ap-southeast-2 (Sydney)**: the AWS Free Plan account is limited to one region, and Mumbai required leaving the Free Plan |
 | Stable address | **Elastic IP** (the URL survives stop/start) |
 | URL / TLS | `https://<ip-with-dashes>.sslip.io`, Caddy auto-provisions a Let's Encrypt cert. No domain/DNS purchase. |
 | Runtime | `docker compose up -d`: `caddy`, `app`, `mysql` (named volume) |
 | Cold start | `restart: always`; app waits for MySQL, runs migrations, then reports ready |
-| Network | Security group: 80/443 open to all, 22 from my IP only, **3306 never exposed** |
+| Network | Security group: 80/443 open to all, 22 from my IP + the EC2 Instance Connect prefix list only, **3306/3000 never exposed** |
+| Access | EC2 Instance Connect (IAM-pushed 60-second SSH keys) via a least-privilege `deployer` IAM user |
 | Cost guard | AWS Budget alert at $10; free-plan credits cover the review period |
 
 Why EC2 + compose (and not App Runner/ECS/RDS)? App Runner is closed to new customers (since 2026-04-30).

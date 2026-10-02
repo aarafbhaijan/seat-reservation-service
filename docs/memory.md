@@ -5,14 +5,16 @@
 
 ## Current status
 
-- **Phase:** service complete and verified locally (37 tests, 20k burst all checks passing, clean clone OK).
-  Next: AWS EC2 deploy with a personal account → live burst → fill live URL/numbers into README + WRITEUP.
+- **Phase:** LIVE at https://16-178-3-167.sslip.io (EC2 t3.small, ap-southeast-2). 20k burst passes all checks live
+  (~550 req/s, CPU-bound); cold start after reboot ~35 s. Remaining: log recording, author rewrite of WRITEUP §7, submit.
 - **Last updated:** 2026-10-02
 
 ## Decision log
 
 | Date | Decision | Alternatives considered | Why | Decided by |
 |------|----------|-------------------------|-----|------------|
+| 2026-10-02 | Region ap-southeast-2 (Sydney) instead of Mumbai | Activate "advanced features" to unlock Mumbai | Free Plan account is pinned to one region; leaving the Free Plan risks charges. Region doesn't affect correctness | Me |
+| 2026-10-02 | Connect via EC2 Instance Connect with an IAM user (`deployer`), SSH limited to my IP + Instance Connect range | Long-lived .pem only, SSH open to 0.0.0.0/0 | IAM-based short-lived keys (like EKS auth); smaller attack surface | Me (asked for EKS-style access; AI set it up) |
 | 2026-10-01 | Deploy on AWS EC2 t3.small + Elastic IP + docker compose (Caddy, app, MySQL), `sslip.io` hostname for TLS | App Runner, ECS + RDS, Railway, Render | App Runner closed to new customers; same compose file locally and in prod; app and DB co-located keeps lock hold times low; no domain needed | Me (AI listed the options and AWS free-tier facts) |
 | 2026-10-01 | Hold model v1: confirm immediately, release via owner cancel; schema keeps `held` + `hold_expires_at` | Time-boxed holds with auto-expiry | Spec's 201 body says `confirmed`; simpler; expiry is an easy extension | Me (proposed by AI) |
 | 2026-10-01 | Partial requests: all-or-nothing | Best-effort | Simpler invariant, matches user expectations, easy to make atomic | Me (proposed by AI) |

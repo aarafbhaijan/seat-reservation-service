@@ -6,9 +6,9 @@ Built with Node 22 + TypeScript + Express 5 + MySQL 8.
 
 | | |
 |---|---|
-| **Live URL** | `https://<to-be-filled-after-deploy>.sslip.io` |
-| **Metrics** | `<live URL>/metrics` |
-| **Health** | `<live URL>/healthz` (liveness) · `<live URL>/readyz` (readiness, checks MySQL) |
+| **Live URL** | **https://16-178-3-167.sslip.io** (AWS EC2 t3.small, ap-southeast-2) |
+| **Metrics** | https://16-178-3-167.sslip.io/metrics |
+| **Health** | [/healthz](https://16-178-3-167.sslip.io/healthz) (liveness) · [/readyz](https://16-178-3-167.sslip.io/readyz) (readiness, checks MySQL) |
 | **Design write-up** | [WRITEUP.md](WRITEUP.md) |
 | **Docs** | [PRD](docs/prd.md) · [Architecture](docs/architecture.md) · [Design](docs/design.md) · [Rules](docs/rules.md) |
 
@@ -30,8 +30,8 @@ Every setting has a safe local default; copy `.env.example` to `.env` to change 
 
 ```bash
 ./burst.sh http://localhost:3000
-# against the live service (the admin key is needed to create the test show):
-ADMIN_API_KEY=<key> ./burst.sh https://<live-host>
+# against the live service (the admin key, shared privately, is needed to create the test show):
+ADMIN_API_KEY=<key> ./burst.sh https://16-178-3-167.sslip.io
 ```
 
 Needs Node 22+ (it runs `npm ci` the first time). It creates a fresh 1,000-seat show (limit 4 per user), mints
@@ -71,6 +71,12 @@ Checks
 ```
 
 Flags: `--total 20000 --seats 1000 --users 5000 --hot-seats 5 --storm 500 --concurrency 1000 --limit 4`.
+
+**Live results (EC2 t3.small, 2 vCPU):** the default 20k burst passes every check, run both from India and from the
+instance itself: zero 5xx, one winner per hot seat, invariant held in every snapshot. Throughput is ~500–570 req/s,
+CPU-bound on the small instance (app ~85% of a core, Caddy TLS ~40%, MySQL ~35%). Server-side time per declined
+request is ~8 ms; most of the client-side latency is queueing behind that throughput plus ~320 ms India↔Sydney RTT.
+After a full EC2 reboot the service is ready again in ~35 s with data intact.
 
 ## API
 
@@ -162,8 +168,9 @@ reserves and cancels. Every write test checks the invariants directly in the dat
 Production is the same compose file plus `docker-compose.prod.yml`, which adds **Caddy** for automatic HTTPS on an
 `<ip>.sslip.io` hostname (no domain needed) and stops exposing the app port directly.
 
-1. Launch **Ubuntu 24.04**, **t3.small**, region `ap-south-1`. Attach an **Elastic IP**. Security group: 80 and 443
-   open to everyone, 22 from your IP only. (MySQL's 3306 is never exposed.)
+1. Launch **Ubuntu 24.04+** (the live box runs 26.04), **t3.small**. The live deployment is in `ap-southeast-2` (the
+   free-plan account's region). Attach an **Elastic IP**. Security group: 80 and 443 open to everyone, 22 only from
+   your IP + the EC2 Instance Connect range. (MySQL's 3306 and the app's 3000 are never exposed.)
 2. SSH in and run:
    ```bash
    curl -fsSL https://raw.githubusercontent.com/aarafbhaijan/seat-reservation-service/main/deploy/ec2-setup.sh | bash

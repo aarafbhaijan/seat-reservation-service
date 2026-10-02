@@ -116,7 +116,15 @@ latency. Errors include the stack. Tokens and keys are redacted.
 Local (MacBook, Docker Desktop), default `./burst.sh`: 20,000 reserves, 1,000 seats, 5 hot seats × 500 buyers.
 Every check passes: zero 5xx, one winner per hot seat, no seat in two 201s, the invariant holds in every snapshot taken
 during the burst and after it, idempotency, conflicts, per-user limit, token identity, and metrics matching the API.
-~1,750 req/s direct, ~1,100 req/s through Caddy. Live EC2 numbers: *to be added after deploy.*
+~1,750 req/s direct, ~1,100 req/s through Caddy.
+
+**Live (https://16-178-3-167.sslip.io, EC2 t3.small, 2 vCPU, ap-southeast-2):** the same 20k burst passes every check,
+run from India (572 req/s) and from the instance itself (507 req/s). The ceiling is CPU, not correctness or locking:
+mid-burst the app used ~85% of a core, Caddy's TLS ~40%, MySQL ~35%. Server-side time per declined request averaged
+~8 ms, and the DB pool never queued; client-side p50 is high because 20,000 requests queue behind ~550 req/s, plus
+~320 ms India↔Sydney RTT and TLS handshakes. Cold start: after a full EC2 reboot the service was ready in ~35 s with
+data intact. More throughput = a larger instance (c7i-flex/m7i-flex) or the scaling steps in §8; nothing in the
+design changes.
 
 ## 7. AI usage: directed vs decided
 

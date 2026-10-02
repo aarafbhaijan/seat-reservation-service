@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup of a fresh Ubuntu 24.04 EC2 instance (run as the default `ubuntu` user):
+# One-time setup of a fresh Ubuntu 24.04+ EC2 instance (run as the default `ubuntu` user; live box: 26.04):
 #   curl -fsSL https://raw.githubusercontent.com/aarafbhaijan/seat-reservation-service/main/deploy/ec2-setup.sh | bash
 # Safe to re-run: it pulls the latest code and restarts the stack.
 set -euo pipefail

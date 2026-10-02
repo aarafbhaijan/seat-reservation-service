@@ -8,3 +8,6 @@ coverage/
 .DS_Store
 # private planning log — not pushed
 docs/commit_history.md
+
+# AWS creds
+aws/
