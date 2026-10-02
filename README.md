@@ -8,6 +8,7 @@ Built with Node 22 + TypeScript + Express 5 + MySQL 8.
 |---|---|
 | **Live URL** | **https://16-178-3-167.sslip.io** (AWS EC2 t3.small, ap-southeast-2) |
 | **Metrics** | https://16-178-3-167.sslip.io/metrics |
+| **Live logs recording** | [seat-reservation-service.mp4](https://drive.google.com/file/d/1Z-OeEkCTSEVZQoF9Qs395oP-WId0LOhP/view): live JSON logs with request IDs during a 20k burst on the deployed service |
 | **Health** | [/healthz](https://16-178-3-167.sslip.io/healthz) (liveness) · [/readyz](https://16-178-3-167.sslip.io/readyz) (readiness, checks MySQL) |
 | **Design write-up** | [WRITEUP.md](WRITEUP.md) |
 | **Docs** | [PRD](docs/prd.md) · [Architecture](docs/architecture.md) · [Design](docs/design.md) · [Rules](docs/rules.md) |
