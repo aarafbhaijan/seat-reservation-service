@@ -37,6 +37,10 @@
 
 ## Lessons / gotchas
 
+- 2026-10-02: after an EC2 stop/start the live app logged nothing, not even "listening". Cause: the perf change used
+  an async pino destination with `minLength: 4096`, which batches 4 KB before writing. Bursts filled it instantly, so
+  load tests looked fine; quiet traffic left single lines stuck. Fix: `minLength: 0` (still async, no batching).
+
 - 2026-10-01: the per-user-limit concurrency test (10 parallel reserves, same user) returned 500s. Cause:
   concurrent `INSERT IGNORE` of the same new `user_quota` row inside transactions deadlocks (InnoDB
   shared next-key locks on the duplicate key). Fix: create the quota row outside the transaction, so the

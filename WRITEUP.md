@@ -150,6 +150,9 @@ fast-path optimisation, and Caddy + sslip.io for HTTPS without a domain.
 - The first metrics version published `seats_available` before its DB query finished (prom-client collects in parallel);
   a test caught it.
 - The first full burst exposed poor throughput. Profiling showed the time was in the app, not the database.
+- The logging speed-up batched output in 4 KB chunks. It looked fine under load, but after a restart the live server
+  logged nothing until enough traffic arrived. Caught while preparing the logs recording; fixed by flushing each line
+  immediately (still non-blocking).
 
 Every decision is logged with who made it in [docs/memory.md](docs/memory.md).
 
